@@ -66,11 +66,6 @@ if(NOT MICROPY_C_HEAP_SIZE)
     set(MICROPY_C_HEAP_SIZE 0)
 endif()
 
-# Enable error text compression by default.
-if(NOT MICROPY_ROM_TEXT_COMPRESSION)
-    set(MICROPY_ROM_TEXT_COMPRESSION ON)
-endif()
-
 # Enable extmod components that will be configured by extmod.cmake.
 # A board may also have enabled additional components.
 set(MICROPY_SSL_MBEDTLS ON)
@@ -243,6 +238,7 @@ set(PICO_SDK_COMPONENTS
     pico_time
     pico_unique_id
     pico_util
+    pico_i2c_slave
     tinyusb_common
     tinyusb_device
 )
@@ -431,7 +427,7 @@ if (MICROPY_PY_NETWORK_NINAW10)
 
     # Enable NINA-W10 WiFi and Bluetooth drivers.
     list(APPEND MICROPY_SOURCE_DRIVERS
-        ${MICROPY_DIR}/drivers/ninaw10/nina_bthci_uart.c
+        ${MICROPY_DIR}/drivers/ninaw10/nina_bt_hci.c
         ${MICROPY_DIR}/drivers/ninaw10/nina_wifi_drv.c
         ${MICROPY_DIR}/drivers/ninaw10/nina_wifi_bsp.c
         ${MICROPY_DIR}/drivers/ninaw10/machine_pin_nina.c
@@ -492,6 +488,20 @@ if (MICROPY_USER_FROZEN_MANIFEST)
 elseif (NOT MICROPY_FROZEN_MANIFEST)
     set(MICROPY_FROZEN_MANIFEST ${MICROPY_PORT_DIR}/boards/manifest.py)
 endif()
+
+
+list(APPEND MICROPY_SOURCE_PORT
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/i2cslave/i2cslave.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/i2cslave/lib/slave_mem_i2c.c
+)
+
+list(APPEND MICROPY_SOURCE_QSTR
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/i2cslave/i2cslave.c
+)
+
+target_include_directories(${MICROPY_TARGET} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/modules/i2cslave/lib
+)
 
 target_sources(${MICROPY_TARGET} PRIVATE
     ${MICROPY_SOURCE_PY}
