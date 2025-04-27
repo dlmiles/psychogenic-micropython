@@ -10,7 +10,7 @@
     * get a callback to printout incoming
 
 '''
-SlaveAddy = 0x17
+SlaveAddy = 0x51
 
 import machine
 import i2cslave
@@ -51,6 +51,10 @@ class I2CDevice:
             return 
             
         self._write_outbytes()
+        
+    def flush_output(self):
+        self._dataqueue = bytearray()
+        i2cslave.flush_output()
         
     
     def _data_tx_done_cb(self):

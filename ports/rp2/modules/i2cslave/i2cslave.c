@@ -84,6 +84,7 @@ static uint8_t i2c_address = 0;
 static uint8_t i2c_pin_sda = 0;
 static uint8_t i2c_pin_scl = 0;
 static uint    i2c_baudrate = 0;
+static uint8_t i2c_use_pullups = 1;
 
 /* flag to know if already done */
 static uint8_t i2c_init_done = 0;
@@ -103,6 +104,7 @@ static MP_DEFINE_CONST_FUN_OBJ_1(i2cslave_set_datain_callback_obj, i2cslave_set_
 
 
 // Set all data transmitted callback function
+// .set_datatx_done_callback(somefunction_to_call)
 static mp_obj_t i2cslave_set_datatx_done_callback(mp_obj_t callback_obj) {
     if (callback_obj != mp_const_none && !mp_obj_is_callable(callback_obj)) {
         mp_raise_TypeError(MP_ERROR_TEXT("callback must be callable or None"));
@@ -116,11 +118,11 @@ static MP_DEFINE_CONST_FUN_OBJ_1(i2cslave_set_datatx_done_callback_obj, i2cslave
 
 
 // function used from i2c handler side to trigger callback on rcv, if set
-void i2cslave_trigger_datain_callback(uint8_t numbytes, uint8_t *bts) {
+static void i2cslave_trigger_datain_callback(volatile uint8_t numbytes, volatile uint8_t *bts) {
     if (i2cslave_datain_callback != mp_const_none) {
         mp_obj_t args[2];
         args[0] = mp_obj_new_int(numbytes);
-        args[1] = mp_obj_new_bytes(bts, numbytes);
+        args[1] = mp_obj_new_bytes((const byte *)bts, numbytes);
         mp_call_function_n_kw(i2cslave_datain_callback, 2, 0, args);
     }
 }
@@ -128,7 +130,7 @@ void i2cslave_trigger_datain_callback(uint8_t numbytes, uint8_t *bts) {
 
 // function used from i2c handler side to trigger callback on 
 // out buffer all transmitted
-void i2cslave_data_out_done_callback() {
+static void i2cslave_data_out_done_callback() {
     if (i2cslave_datatxdone_callback != mp_const_none) {
         mp_call_function_0(i2cslave_datatxdone_callback);
     }
@@ -141,6 +143,7 @@ void i2cslave_data_out_done_callback() {
 
 
 // Initialize function
+// initialize() -- call when ready, after setup() is done
 static mp_obj_t i2cslave_initialize(void) {
     
     if (i2c_address == 0) {
@@ -156,7 +159,8 @@ static mp_obj_t i2cslave_initialize(void) {
     slvmem_i2c_init(i2c_pin_sda, i2c_pin_scl, i2c_address, 
         i2c_baudrate,
         i2cslave_trigger_datain_callback,
-        i2cslave_data_out_done_callback);
+        i2cslave_data_out_done_callback,
+        i2c_use_pullups);
         
     return mp_const_none;
 }
@@ -164,28 +168,49 @@ static MP_DEFINE_CONST_FUN_OBJ_0(i2cslave_initialize_obj, i2cslave_initialize);
 
 
 
+// Initialize function
+// flush_output() -- call to cancel any pending output
+static mp_obj_t i2cslave_flush_output(void) {
+    
+    slvmem_flush_output();
+        
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(i2cslave_flush_output_obj, i2cslave_flush_output);
+
+
+
 
 // Deinit function
-static mp_obj_t i2cslave_deinitialize(void) {
-    // Call C library initialization function
+// .deinitialize([FORCE])
+static mp_obj_t i2cslave_deinitialize(mp_uint_t n_args, const mp_obj_t *args) {
+    bool force_deinit = 0;
     
-    if (i2c_init_done) {
+    if (n_args) {
+        force_deinit = mp_obj_is_true(args[0]);
+    } 
+    if (i2c_init_done || force_deinit) {
         i2c_init_done = 0;
         slvmem_i2c_deinit();
     }
         
     return mp_const_none;
 }
-static MP_DEFINE_CONST_FUN_OBJ_0(i2cslave_deinitialize_obj, i2cslave_deinitialize);
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(i2cslave_deinitialize_obj, 0, 1, i2cslave_deinitialize);
 
 
 // setup function to specify params
+// .setup(address, scl, sda, baud, [use_pullups])
 static mp_obj_t i2cslave_setup(mp_uint_t n_args, const mp_obj_t *args) {
-    // Extract address, scl_pin, sda_pin, baudrate
     mp_int_t address = mp_obj_get_int(args[0]);
     mp_int_t scl_pin = mp_obj_get_int(args[1]);
     mp_int_t sda_pin = mp_obj_get_int(args[2]);
     mp_int_t baudrate = mp_obj_get_int(args[3]);
+    
+    mp_int_t pullups = i2c_use_pullups;
+    if (n_args >= 5) {
+        pullups = mp_obj_get_int(args[4]);
+    }
     // Validate parameters
     if (address < 0 || address > 127) {
         mp_raise_ValueError(MP_ERROR_TEXT("address must be 0-127"));
@@ -201,10 +226,11 @@ static mp_obj_t i2cslave_setup(mp_uint_t n_args, const mp_obj_t *args) {
     i2c_pin_scl = (uint8_t)scl_pin;
     
     i2c_baudrate = baudrate;
+    i2c_use_pullups = (uint8_t)pullups;
     
     return mp_const_none;
 }
-static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(i2cslave_setup_obj, 4, 4, i2cslave_setup);
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(i2cslave_setup_obj, 4, 5, i2cslave_setup);
 
 
 
@@ -213,6 +239,7 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(i2cslave_setup_obj, 4, 4, i2cslave_se
 
 
 // Write bytes: queue data out to return on reads from master
+// .write(len, bytes)
 static mp_obj_t i2cslave_write_bytes(mp_uint_t n_args, const mp_obj_t *args) {
     // Extract bytelen (integer)
     int bytelen = mp_obj_get_int(args[0]);
@@ -239,7 +266,8 @@ static const mp_rom_map_elem_t i2cslave_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_deinit), MP_ROM_PTR(&i2cslave_deinitialize_obj) },
     { MP_ROM_QSTR(MP_QSTR_set_datain_callback), MP_ROM_PTR(&i2cslave_set_datain_callback_obj) },
     { MP_ROM_QSTR(MP_QSTR_set_datatxdone_callback), MP_ROM_PTR(&i2cslave_set_datatx_done_callback_obj) },
-    { MP_ROM_QSTR(MP_QSTR_write_bytes), MP_ROM_PTR(&i2cslave_write_bytes_obj) }
+    { MP_ROM_QSTR(MP_QSTR_write_bytes), MP_ROM_PTR(&i2cslave_write_bytes_obj)},
+    { MP_ROM_QSTR(MP_QSTR_flush_output), MP_ROM_PTR(&i2cslave_flush_output_obj)}
 };
 static MP_DEFINE_CONST_DICT(i2cslave_module_globals, i2cslave_module_globals_table);
 

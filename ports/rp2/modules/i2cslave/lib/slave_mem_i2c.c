@@ -17,8 +17,8 @@
 
 #include "./slave_mem_i2c.h"
 
-xfer_buffer in_context;
-xfer_buffer out_context;
+volatile xfer_buffer in_context;
+volatile xfer_buffer out_context;
 bool is_receiving = 0;
 
 
@@ -44,6 +44,11 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
         break;
     case I2C_SLAVE_REQUEST: // master is requesting data
         is_receiving = 0;
+        if (out_context.mem_index >= I2CSLAVE_MEMBUF_LEN) {
+            out_context.mem_index = 0;
+            out_context.mem_len = 0;
+        }
+        
         if (out_context.mem_index >= out_context.mem_len) {
             i2c_write_byte_raw(i2c, 0xff);
         } else {
@@ -80,12 +85,15 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
 
 
 void slvmem_set_data_out(uint8_t len, uint8_t * bts) {
-    memcpy(out_context.mem, bts, len);
+    memcpy((void*)out_context.mem, bts, len);
     out_context.mem_len = len;
     out_context.mem_index = 0;
 }
 
-
+void slvmem_flush_output(void) {
+    out_context.mem_len = 0;
+    out_context.mem_index = 0;
+}
 void slvmem_i2c_deinit(void) {
     i2c_deinit(I2CSLAVE_DEVICE);
 }
@@ -93,7 +101,8 @@ void slvmem_i2c_deinit(void) {
 void slvmem_i2c_init(uint8_t sda_pin, uint8_t scl_pin, uint8_t address, 
     uint baudrate,
     data_in_callback cb_datain,
-    data_out_done_callback cb_dataout_done) {
+    data_out_done_callback cb_dataout_done,
+    uint8_t use_pullups) {
     
     callback_datain = cb_datain;
     callback_dataout_done = cb_dataout_done;

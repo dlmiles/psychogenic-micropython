@@ -33,15 +33,19 @@ typedef struct
 } xfer_buffer;
 
 
-typedef void(*data_in_callback)(uint8_t len, uint8_t *bts);
+typedef void(*data_in_callback)(volatile uint8_t len, volatile uint8_t *bts);
 typedef void(*data_out_done_callback)(void);
 
 void slvmem_i2c_init(uint8_t sda_pin, uint8_t scl_pin, 
     uint8_t address,
     uint baudrate,
     data_in_callback cb_datain,
-    data_out_done_callback cb_dataout_done
+    data_out_done_callback cb_dataout_done,
+    uint8_t use_pullups
 );
+
+void slvmem_flush_output(void);
+
 
 void slvmem_set_data_out(uint8_t len, uint8_t * bts);
 
