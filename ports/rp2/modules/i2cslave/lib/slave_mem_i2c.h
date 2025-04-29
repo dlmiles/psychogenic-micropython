@@ -25,6 +25,7 @@
 #define I2CSLAVE_MEMBUF_LEN (16*8)
 #define I2CSLAVE_DEVICE i2c1
 
+
 typedef struct
 {
     uint8_t mem[I2CSLAVE_MEMBUF_LEN];
@@ -33,7 +34,7 @@ typedef struct
 } xfer_buffer;
 
 
-typedef void(*data_in_callback)(volatile uint8_t len, volatile uint8_t *bts);
+typedef void(*data_in_callback)(uint8_t len, uint8_t *bts);
 typedef void(*data_out_done_callback)(void);
 
 void slvmem_i2c_init(uint8_t sda_pin, uint8_t scl_pin, 

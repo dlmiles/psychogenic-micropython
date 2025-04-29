@@ -74,10 +74,11 @@
 #include "py/runtime.h"   
 #include "py/objstr.h"   
 #include "slave_mem_i2c.h"
+#include <string.h>
 
 /* callbacks to uPython space */
-static mp_obj_t i2cslave_datain_callback = mp_const_none;
-static mp_obj_t i2cslave_datatxdone_callback = mp_const_none;
+static mp_obj_t i2cslave_datain_callback = MP_OBJ_NULL;
+static mp_obj_t i2cslave_datatxdone_callback = MP_OBJ_NULL;
 
 /* settings for I2C device */
 static uint8_t i2c_address = 0;
@@ -116,23 +117,44 @@ static MP_DEFINE_CONST_FUN_OBJ_1(i2cslave_set_datatx_done_callback_obj, i2cslave
 
 
 
+static uint8_t cbsched_numbytes = 0;
+static uint8_t cbsched_contents[I2CSLAVE_MEMBUF_LEN];
 
 // function used from i2c handler side to trigger callback on rcv, if set
-static void i2cslave_trigger_datain_callback(volatile uint8_t numbytes, volatile uint8_t *bts) {
-    if (i2cslave_datain_callback != mp_const_none) {
-        mp_obj_t args[2];
-        args[0] = mp_obj_new_int(numbytes);
-        args[1] = mp_obj_new_bytes((const byte *)bts, numbytes);
-        mp_call_function_n_kw(i2cslave_datain_callback, 2, 0, args);
+static void i2cslave_trigger_datain_callback(uint8_t numbytes, uint8_t *bts) {
+    
+    if (i2cslave_datain_callback != MP_OBJ_NULL) {
+        cbsched_numbytes = numbytes;
+        memcpy(cbsched_contents, bts, numbytes);
+        mp_obj_t sz = mp_obj_new_int(numbytes);
+        mp_sched_schedule(i2cslave_datain_callback, sz);
     }
 }
+
+static mp_obj_t i2cslave_pending_data_into(mp_obj_t ba_obj) {
+    
+    mp_buffer_info_t bufinfo;
+    mp_get_buffer_raise(ba_obj, &bufinfo, MP_BUFFER_WRITE);
+    
+    size_t size = bufinfo.len;
+    if (size > cbsched_numbytes) {
+        size = cbsched_numbytes;
+    }
+    if (size) {
+        memcpy(bufinfo.buf, cbsched_contents, size);
+    }
+    mp_obj_t sz = mp_obj_new_int(size);
+    return sz;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(i2cslave_pending_data_into_obj, i2cslave_pending_data_into);
+
 
 
 // function used from i2c handler side to trigger callback on 
 // out buffer all transmitted
 static void i2cslave_data_out_done_callback() {
-    if (i2cslave_datatxdone_callback != mp_const_none) {
-        mp_call_function_0(i2cslave_datatxdone_callback);
+    if (i2cslave_datatxdone_callback != MP_OBJ_NULL) {
+        mp_sched_schedule(i2cslave_datatxdone_callback, mp_const_none);
     }
 }
 
@@ -267,6 +289,7 @@ static const mp_rom_map_elem_t i2cslave_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_set_datain_callback), MP_ROM_PTR(&i2cslave_set_datain_callback_obj) },
     { MP_ROM_QSTR(MP_QSTR_set_datatxdone_callback), MP_ROM_PTR(&i2cslave_set_datatx_done_callback_obj) },
     { MP_ROM_QSTR(MP_QSTR_write_bytes), MP_ROM_PTR(&i2cslave_write_bytes_obj)},
+    { MP_ROM_QSTR(MP_QSTR_pending_data_into), MP_ROM_PTR(&i2cslave_pending_data_into_obj)},
     { MP_ROM_QSTR(MP_QSTR_flush_output), MP_ROM_PTR(&i2cslave_flush_output_obj)}
 };
 static MP_DEFINE_CONST_DICT(i2cslave_module_globals, i2cslave_module_globals_table);
