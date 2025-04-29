@@ -45,6 +45,11 @@ void slvmem_i2c_init(uint8_t sda_pin, uint8_t scl_pin,
     uint8_t use_pullups
 );
 
+void slvmem_set_callbacks(
+    data_in_callback cb_datain,
+    data_out_done_callback cb_dataout_done
+);
+
 void slvmem_flush_output(void);
 
 

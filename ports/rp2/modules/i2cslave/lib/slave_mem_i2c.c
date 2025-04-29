@@ -19,10 +19,10 @@
 
 #include "./slave_mem_i2c.h"
 
-// #define USE_OUTDATA_LOCK
+//define USE_OUTDATA_LOCK
 
 
-#define XFER_BUF_VOLATILITY 
+#define XFER_BUF_VOLATILITY     volatile
 
 XFER_BUF_VOLATILITY xfer_buffer in_context;
 XFER_BUF_VOLATILITY xfer_buffer out_context;
@@ -41,7 +41,9 @@ spin_lock_t *outdata_lock = NULL;
 static void init_outdata_lock() {
 
     if (outdata_lock == NULL) {
-        outdata_lock = spin_lock_init(0);
+        outdata_lock = spin_lock_init(next_striped_spin_lock_num());
+
+
     }
 
 }
@@ -102,6 +104,7 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
                 
                 uint8_t len = in_context.mem_len;
                 in_context.mem_index = 0;
+                in_context.mem_len = 0;
                 memcpy(in_buffer, (const void*)in_context.mem, len );
                 
                 #ifdef USE_OUTDATA_LOCK
@@ -168,15 +171,24 @@ void slvmem_i2c_deinit(void) {
     i2c_deinit(I2CSLAVE_DEVICE);
 }
 
+
+void slvmem_set_callbacks(
+    data_in_callback cb_datain,
+    data_out_done_callback cb_dataout_done)
+{
+    
+    callback_datain = cb_datain;
+    callback_dataout_done = cb_dataout_done;
+}
+
 void slvmem_i2c_init(uint8_t sda_pin, uint8_t scl_pin, uint8_t address, 
     uint baudrate,
     data_in_callback cb_datain,
     data_out_done_callback cb_dataout_done,
     uint8_t use_pullups) {
     
+    slvmem_set_callbacks(cb_datain, cb_dataout_done); 
     
-    callback_datain = cb_datain;
-    callback_dataout_done = cb_dataout_done;
     gpio_init(sda_pin);
     gpio_set_function(sda_pin, GPIO_FUNC_I2C);
     gpio_pull_up(sda_pin);

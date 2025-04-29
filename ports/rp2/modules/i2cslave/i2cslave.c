@@ -123,11 +123,11 @@ static uint8_t cbsched_contents[I2CSLAVE_MEMBUF_LEN];
 // function used from i2c handler side to trigger callback on rcv, if set
 static void i2cslave_trigger_datain_callback(uint8_t numbytes, uint8_t *bts) {
     
-    if (i2cslave_datain_callback != MP_OBJ_NULL) {
+    if (i2cslave_datain_callback != MP_OBJ_NULL && i2cslave_datain_callback != mp_const_none) {
         cbsched_numbytes = numbytes;
         memcpy(cbsched_contents, bts, numbytes);
-        mp_obj_t sz = mp_obj_new_int(numbytes);
-        mp_sched_schedule(i2cslave_datain_callback, sz);
+        // mp_obj_t sz = mp_obj_new_int(numbytes);
+        mp_sched_schedule(i2cslave_datain_callback, mp_const_none);
     }
 }
 
@@ -153,7 +153,7 @@ static MP_DEFINE_CONST_FUN_OBJ_1(i2cslave_pending_data_into_obj, i2cslave_pendin
 // function used from i2c handler side to trigger callback on 
 // out buffer all transmitted
 static void i2cslave_data_out_done_callback() {
-    if (i2cslave_datatxdone_callback != MP_OBJ_NULL) {
+    if (i2cslave_datatxdone_callback != MP_OBJ_NULL && i2cslave_datatxdone_callback != mp_const_none) {
         mp_sched_schedule(i2cslave_datatxdone_callback, mp_const_none);
     }
 }
@@ -172,7 +172,11 @@ static mp_obj_t i2cslave_initialize(void) {
         mp_raise_ValueError(MP_ERROR_TEXT("call setup() first"));
     }
     
+    
+    
     if (i2c_init_done) {
+        slvmem_set_callbacks(i2cslave_trigger_datain_callback, i2cslave_data_out_done_callback);
+        
         mp_raise_ValueError(MP_ERROR_TEXT("init was already done"));
     }
     
