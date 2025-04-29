@@ -175,6 +175,7 @@ static mp_obj_t i2cslave_initialize(void) {
     
     
     if (i2c_init_done) {
+        // be sure we (re)set the callbacks regardless
         slvmem_set_callbacks(i2cslave_trigger_datain_callback, i2cslave_data_out_done_callback);
         
         mp_raise_ValueError(MP_ERROR_TEXT("init was already done"));
@@ -197,7 +198,9 @@ static MP_DEFINE_CONST_FUN_OBJ_0(i2cslave_initialize_obj, i2cslave_initialize);
 // Initialize function
 // flush_output() -- call to cancel any pending output
 static mp_obj_t i2cslave_flush_output(void) {
-    
+    while (slvmem_is_busy()) {
+        ;
+    }
     slvmem_flush_output();
         
     return mp_const_none;
@@ -276,7 +279,9 @@ static mp_obj_t i2cslave_write_bytes(mp_uint_t n_args, const mp_obj_t *args) {
     if (bufinfo.len < bytelen) {
         mp_raise_ValueError(MP_ERROR_TEXT("buffer too small"));
     }
-    
+    while (slvmem_is_busy()) {
+        ;
+    }
     slvmem_set_data_out(bytelen, bts);
     int result = bytelen;
     return mp_obj_new_int(result);

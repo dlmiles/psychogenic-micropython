@@ -33,6 +33,7 @@ bool is_receiving = 0;
 static data_in_callback callback_datain = NULL;
 static data_out_done_callback callback_dataout_done = NULL;
 
+volatile uint8_t busy_reading_or_writing = 0;
 
 
 #ifdef USE_OUTDATA_LOCK
@@ -58,6 +59,7 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
     switch (event) {
     case I2C_SLAVE_RECEIVE: // master has written some data
         // save into memory
+        busy_reading_or_writing = 1;
         is_receiving = 1;
         #ifdef USE_OUTDATA_LOCK
         save = spin_lock_blocking(outdata_lock);
@@ -74,6 +76,7 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
         break;
     case I2C_SLAVE_REQUEST: // master is requesting data
         is_receiving = 0;
+        busy_reading_or_writing = 1;
         #ifdef USE_OUTDATA_LOCK
         save = spin_lock_blocking(outdata_lock);
         #endif
@@ -94,6 +97,7 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
         #endif
         break;
     case I2C_SLAVE_FINISH: // master has signalled Stop / Restart
+        busy_reading_or_writing = 0;
         if (is_receiving) {
             if (in_context.mem_len) {
                 // have data in, notify userspace
@@ -171,7 +175,11 @@ void slvmem_i2c_deinit(void) {
     i2c_deinit(I2CSLAVE_DEVICE);
 }
 
-
+volatile uint8_t slvmem_is_busy(void)
+{
+    return busy_reading_or_writing;
+    
+}
 void slvmem_set_callbacks(
     data_in_callback cb_datain,
     data_out_done_callback cb_dataout_done)
@@ -191,11 +199,16 @@ void slvmem_i2c_init(uint8_t sda_pin, uint8_t scl_pin, uint8_t address,
     
     gpio_init(sda_pin);
     gpio_set_function(sda_pin, GPIO_FUNC_I2C);
-    gpio_pull_up(sda_pin);
+    if (use_pullups) {
+        gpio_pull_up(sda_pin);
+    }
 
     gpio_init(scl_pin);
     gpio_set_function(scl_pin, GPIO_FUNC_I2C);
-    gpio_pull_up(scl_pin);
+    
+    if (use_pullups) {
+        gpio_pull_up(scl_pin);
+    }
 
     i2c_init(I2CSLAVE_DEVICE, baudrate);
     // configure I2C0 for slave mode

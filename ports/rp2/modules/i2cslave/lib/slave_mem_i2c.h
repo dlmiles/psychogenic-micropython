@@ -57,3 +57,6 @@ void slvmem_set_data_out(uint8_t len, uint8_t * bts);
 
 
 void slvmem_i2c_deinit(void);
+
+volatile uint8_t slvmem_is_busy(void);
+
