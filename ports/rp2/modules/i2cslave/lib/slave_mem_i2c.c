@@ -110,7 +110,7 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
                 in_context.mem_index = 0;
                 in_context.mem_len = 0;
                 memcpy(in_buffer, (const void*)in_context.mem, len );
-                
+                memset((void*)in_context.mem, 0, len);
                 #ifdef USE_OUTDATA_LOCK
                 spin_unlock(outdata_lock, save);
                 #endif
