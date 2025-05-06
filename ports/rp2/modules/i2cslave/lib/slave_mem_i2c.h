@@ -25,6 +25,9 @@
 #define I2CSLAVE_MEMBUF_LEN (16*8)
 #define I2CSLAVE_DEVICE i2c1
 
+#include "py/mphal.h"
+#include "py/mpprint.h"
+#include "py/misc.h"
 
 typedef struct
 {
@@ -60,3 +63,10 @@ void slvmem_i2c_deinit(void);
 
 volatile uint8_t slvmem_is_busy(void);
 
+#ifdef MICROPY_DEBUG
+#define I2CS_DEBUG(...) mp_printf(&mp_plat_print, __VA_ARGS__)
+#define I2CS_DEBUGOBJ(some_obj) mp_obj_print(some_obj, PRINT_REPR); I2CS_DEBUG("\n")
+#else
+#define I2CS_DEBUG(...)  
+#define I2CS_DEBUGOBJ(some_obj)
+#endif

@@ -98,6 +98,12 @@ add_executable(${MICROPY_TARGET})
 if(PICO_ARM)
     target_compile_definitions(pico_platform_headers INTERFACE
         PICO_ARM=1
+	MICROPY_DEBUG_PRINTERS=1
+	MICROPY_DEBUG=1
+        # MICROPY_DEBUG_VERBOSE=1
+        # MICROPY_DEBUG_GC=1  # Garbage collector debugging
+        # MICROPY_DEBUG_VM=1  # Virtual machine debugging
+
     )
 endif()
 

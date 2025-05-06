@@ -8,28 +8,25 @@
  * 
  * 1) call setup(ADDRESS, SCL, SDA, BAUDRATE) to specify params
  * 
- * 2) optional, but probably needed, create a callback for 
- *    received data  CB(LEN, BYTES)
+ * 2) optional, either use polling (recommended) or callbacks 
+ *    (still get corrupted somehow, sometimes). If using callbacks
+ *    set those up for data in and tx done using 
+ *    set_datatxdone_callback and
+ *    set_datain_callback
  * 
- * 3) optional, create a callback to know when all queued 
- *    data has been read by master, CB()
+ * 3) call initialize() to actually start processing
  * 
- * 4) call initialize() to actually start processing
- * 
- * 5) call write_bytes(LEN, BYTES) to set the output buffer
+ * 4) call write_bytes(LEN, BYTES) to set the output buffer
  *    for reads from master
+ * 
+ * 5) if polling, check tx_done and have_pending_data and then
+ *    write_bytes or pending_data_into() as appropriate
  * 
  * Example
  * 
  * 
  *  import i2cslave
  * 
- *  def rcv_data_cb(numbytes, bts):
- *      print(f"GOT {numbytes} DATA: {bts}")
- *      
- *  def tx_done_cb():
- *      print("Data transmitted!")
- *      
  *  def set_outdata(bts):
  *      return i2cslave.write_bytes(len(bts), bts)
  *      
@@ -38,12 +35,22 @@
  *      sdapin = 2
  *      outbytes = bytearray('hello!', 'ascii')
  *      i2cslave.setup(SlaveAddy, sclpin, sdapin)
- *      i2cslave.set_datain_callback(rcv_data_cb)
- *      i2cslave.set_datatxdone_callback(tx_done_cb)
+ *      # i2cslave.set_datain_callback(rcv_data_cb)
+ *      # i2cslave.set_datatxdone_callback(tx_done_cb)
  *      return i2cslave.initialize()
+ * 
+ *  
  * 
  * start_i2c()
  * set_outdata(b'this will go out when I am read')
+ * while True:
+ *    in_bytes = bytearray(256)
+ *    if i2cslave.have_pending_data():
+ *         numbytes = i2cslave.pending_data_into(in_bytes)
+ *         # do something with
+ *    if i2cslave.tx_done():
+ *         send_more_data()
+ * 
  * 
  * 
  * 
@@ -77,18 +84,89 @@
 #include <string.h>
 
 /* callbacks to uPython space */
-static mp_obj_t i2cslave_datain_callback = MP_OBJ_NULL;
-static mp_obj_t i2cslave_datatxdone_callback = MP_OBJ_NULL;
+typedef struct _callback_store_t {
+    mp_obj_t datain;
+    mp_obj_t datatxdone;
+} callback_store_t;
+
+// Static storage instance
+static callback_store_t * callback_store = NULL;
+
+
+// current state bundle
+typedef struct _i2c_tx_state_t {
+        uint8_t have_pending_in;
+        uint8_t i2c_tx_done;
+        uint8_t init_done;
+} i2c_tx_state_t;
+
+static i2c_tx_state_t i2c_state = {0};
+
 
 /* settings for I2C device */
-static uint8_t i2c_address = 0;
-static uint8_t i2c_pin_sda = 0;
-static uint8_t i2c_pin_scl = 0;
-static uint    i2c_baudrate = 0;
-static uint8_t i2c_use_pullups = 1;
+#define I2CSLAVE_PULLUPS_DEFAULT    1
+typedef struct _i2c_settings {
+    uint8_t address;
+    uint8_t pin_sda;
+    uint8_t pin_scl;
+    uint    baudrate;
+    uint8_t use_pullups;
+} i2c_settings_t;
 
-/* flag to know if already done */
-static uint8_t i2c_init_done = 0;
+static i2c_settings_t i2c_settings = {0};
+
+
+static void i2cslave_init_cb_storage(void) {
+    
+    I2CS_DEBUG("CB STORAGE INIT\n");
+    if (callback_store == NULL) {
+        
+        I2CS_DEBUG("... first time!\n");
+        callback_store = m_new(callback_store_t, 1); // Allocate GC-tracked memory
+        callback_store->datain = MP_OBJ_NULL; // Initialize to null
+        callback_store->datatxdone = MP_OBJ_NULL; // Initialize to null
+    }
+}
+
+
+// setup function to specify params
+// .setup(address, scl, sda, baud, [use_pullups])
+static mp_obj_t i2cslave_setup(mp_uint_t n_args, const mp_obj_t *args) {
+    
+    mp_int_t address = mp_obj_get_int(args[0]);
+    mp_int_t scl_pin = mp_obj_get_int(args[1]);
+    mp_int_t sda_pin = mp_obj_get_int(args[2]);
+    mp_int_t baudrate = mp_obj_get_int(args[3]);
+    
+    mp_int_t pullups = I2CSLAVE_PULLUPS_DEFAULT;
+    if (n_args >= 5) {
+        pullups = mp_obj_get_int(args[4]);
+    }
+    
+    // Validate parameters
+    if (address < 0 || address > 127) {
+        mp_raise_ValueError(MP_ERROR_TEXT("address must be 0-127"));
+    }
+    i2c_settings.address = (uint8_t)address;
+    if (scl_pin < 0 || scl_pin > 29 || sda_pin < 0 || sda_pin > 29) {
+        mp_raise_ValueError(MP_ERROR_TEXT("pins must be 0-29"));
+    }
+    if (scl_pin == sda_pin) {
+        mp_raise_ValueError(MP_ERROR_TEXT("SCL and SDA pins must be different"));
+    }
+    i2c_settings.pin_sda = (uint8_t)sda_pin;
+    i2c_settings.pin_scl = (uint8_t)scl_pin;
+    
+    i2c_settings.baudrate = baudrate;
+    i2c_settings.use_pullups = (uint8_t)pullups;
+    
+    I2CS_DEBUG("i2c setup done!\n");
+    
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(i2cslave_setup_obj, 4, 5, i2cslave_setup);
+
+
 
 
 
@@ -97,7 +175,11 @@ static mp_obj_t i2cslave_set_datain_callback(mp_obj_t callback_obj) {
     if (callback_obj != mp_const_none && !mp_obj_is_callable(callback_obj)) {
         mp_raise_TypeError(MP_ERROR_TEXT("callback must be callable or None"));
     }
-    i2cslave_datain_callback = callback_obj;
+    I2CS_DEBUG("Setting up datain cb: ");
+    I2CS_DEBUGOBJ(callback_obj);
+    i2cslave_init_cb_storage();
+    callback_store->datain = callback_obj;
+    I2CS_DEBUGOBJ(callback_store->datain);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(i2cslave_set_datain_callback_obj, i2cslave_set_datain_callback);
@@ -110,10 +192,16 @@ static mp_obj_t i2cslave_set_datatx_done_callback(mp_obj_t callback_obj) {
     if (callback_obj != mp_const_none && !mp_obj_is_callable(callback_obj)) {
         mp_raise_TypeError(MP_ERROR_TEXT("callback must be callable or None"));
     }
-    i2cslave_datatxdone_callback = callback_obj;
+    
+    I2CS_DEBUG("Setting up data tx done cb: ");
+    I2CS_DEBUGOBJ(callback_obj);
+    i2cslave_init_cb_storage();
+    callback_store->datatxdone = callback_obj;
+    I2CS_DEBUGOBJ(callback_store->datatxdone);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(i2cslave_set_datatx_done_callback_obj, i2cslave_set_datatx_done_callback);
+
 
 
 
@@ -123,13 +211,77 @@ static uint8_t cbsched_contents[I2CSLAVE_MEMBUF_LEN];
 // function used from i2c handler side to trigger callback on rcv, if set
 static void i2cslave_trigger_datain_callback(uint8_t numbytes, uint8_t *bts) {
     
-    if (i2cslave_datain_callback != MP_OBJ_NULL && i2cslave_datain_callback != mp_const_none) {
-        cbsched_numbytes = numbytes;
-        memcpy(cbsched_contents, bts, numbytes);
-        // mp_obj_t sz = mp_obj_new_int(numbytes);
-        mp_sched_schedule(i2cslave_datain_callback, mp_const_none);
+    i2c_state.have_pending_in = 1; // flag it, for polling
+    
+    /* always copy, so this works with cb and polling */
+    cbsched_numbytes = numbytes;
+    memcpy(cbsched_contents, bts, numbytes);
+    
+    
+    if (callback_store != NULL && callback_store->datain != MP_OBJ_NULL && callback_store->datain != mp_const_none) {
+        // I2CS_DEBUG("schdi: ");
+        // I2CS_DEBUGOBJ(callback_store->datain);
+        mp_sched_schedule(callback_store->datain, mp_const_none);
+        // I2CS_DEBUG("done\n");
     }
 }
+
+
+// function used from i2c handler side to trigger callback on 
+// out buffer all transmitted
+static void i2cslave_data_out_done_callback() {
+    
+    i2c_state.i2c_tx_done = 1; // flag it, for polling
+    
+    if (callback_store != NULL && callback_store->datatxdone != MP_OBJ_NULL && callback_store->datatxdone != mp_const_none) {
+        
+        // I2CS_DEBUG("schdo: ");
+        // I2CS_DEBUGOBJ(callback_store->datatxdone);
+        mp_sched_schedule(callback_store->datatxdone, mp_const_none);
+        // I2CS_DEBUG("done\n");
+    }
+}
+
+
+
+// Initialize function
+// initialize() -- call when ready, after setup() is done
+static mp_obj_t i2cslave_initialize(void) {
+    
+    
+    if (i2c_settings.address == 0) {
+        mp_raise_ValueError(MP_ERROR_TEXT("call setup() first"));
+    }
+    
+    
+    
+    if (i2c_state.init_done) {
+        // be sure we (re)set the callbacks regardless
+        slvmem_set_callbacks(i2cslave_trigger_datain_callback, i2cslave_data_out_done_callback);
+        
+        mp_raise_ValueError(MP_ERROR_TEXT("init was already done"));
+    }
+    
+    i2c_state.init_done = 1;
+    
+    slvmem_i2c_init(i2c_settings.pin_sda, i2c_settings.pin_scl, i2c_settings.address, 
+        i2c_settings.baudrate,
+        i2cslave_trigger_datain_callback,
+        i2cslave_data_out_done_callback,
+        i2c_settings.use_pullups);
+        
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(i2cslave_initialize_obj, i2cslave_initialize);
+
+
+
+
+
+
+
+
+
 
 static mp_obj_t i2cslave_pending_data_into(mp_obj_t ba_obj) {
     
@@ -143,55 +295,36 @@ static mp_obj_t i2cslave_pending_data_into(mp_obj_t ba_obj) {
     if (size) {
         memcpy(bufinfo.buf, cbsched_contents, size);
     }
+    
+    i2c_state.have_pending_in = 0; // clear the flag, data returned
+    
     mp_obj_t sz = mp_obj_new_int(size);
     return sz;
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(i2cslave_pending_data_into_obj, i2cslave_pending_data_into);
 
-
-
-// function used from i2c handler side to trigger callback on 
-// out buffer all transmitted
-static void i2cslave_data_out_done_callback() {
-    if (i2cslave_datatxdone_callback != MP_OBJ_NULL && i2cslave_datatxdone_callback != mp_const_none) {
-        mp_sched_schedule(i2cslave_datatxdone_callback, mp_const_none);
-    }
+static mp_obj_t i2cslave_have_pending_data() {
+    
+    mp_obj_t v =  mp_obj_new_int(i2c_state.have_pending_in);
+    // I2CS_DEBUGOBJ(v);
+    return v;
 }
+static MP_DEFINE_CONST_FUN_OBJ_0(i2cslave_have_pending_data_obj, i2cslave_have_pending_data);
 
 
-
-
-
-
-
-// Initialize function
-// initialize() -- call when ready, after setup() is done
-static mp_obj_t i2cslave_initialize(void) {
+static mp_obj_t i2cslave_tx_done() {
     
-    if (i2c_address == 0) {
-        mp_raise_ValueError(MP_ERROR_TEXT("call setup() first"));
-    }
-    
-    
-    
-    if (i2c_init_done) {
-        // be sure we (re)set the callbacks regardless
-        slvmem_set_callbacks(i2cslave_trigger_datain_callback, i2cslave_data_out_done_callback);
-        
-        mp_raise_ValueError(MP_ERROR_TEXT("init was already done"));
-    }
-    
-    i2c_init_done = 1;
-    
-    slvmem_i2c_init(i2c_pin_sda, i2c_pin_scl, i2c_address, 
-        i2c_baudrate,
-        i2cslave_trigger_datain_callback,
-        i2cslave_data_out_done_callback,
-        i2c_use_pullups);
-        
-    return mp_const_none;
+    mp_obj_t rv = mp_obj_new_int(i2c_state.i2c_tx_done);
+    i2c_state.i2c_tx_done = 0; // question has been asked, clear that flag
+    return rv;
 }
-static MP_DEFINE_CONST_FUN_OBJ_0(i2cslave_initialize_obj, i2cslave_initialize);
+static MP_DEFINE_CONST_FUN_OBJ_0(i2cslave_tx_done_obj, i2cslave_tx_done);
+
+
+
+
+
+
 
 
 
@@ -218,51 +351,14 @@ static mp_obj_t i2cslave_deinitialize(mp_uint_t n_args, const mp_obj_t *args) {
     if (n_args) {
         force_deinit = mp_obj_is_true(args[0]);
     } 
-    if (i2c_init_done || force_deinit) {
-        i2c_init_done = 0;
+    if (i2c_state.init_done || force_deinit) {
+        i2c_state.init_done = 0;
         slvmem_i2c_deinit();
     }
         
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(i2cslave_deinitialize_obj, 0, 1, i2cslave_deinitialize);
-
-
-// setup function to specify params
-// .setup(address, scl, sda, baud, [use_pullups])
-static mp_obj_t i2cslave_setup(mp_uint_t n_args, const mp_obj_t *args) {
-    mp_int_t address = mp_obj_get_int(args[0]);
-    mp_int_t scl_pin = mp_obj_get_int(args[1]);
-    mp_int_t sda_pin = mp_obj_get_int(args[2]);
-    mp_int_t baudrate = mp_obj_get_int(args[3]);
-    
-    mp_int_t pullups = i2c_use_pullups;
-    if (n_args >= 5) {
-        pullups = mp_obj_get_int(args[4]);
-    }
-    // Validate parameters
-    if (address < 0 || address > 127) {
-        mp_raise_ValueError(MP_ERROR_TEXT("address must be 0-127"));
-    }
-    i2c_address = (uint8_t)address;
-    if (scl_pin < 0 || scl_pin > 29 || sda_pin < 0 || sda_pin > 29) {
-        mp_raise_ValueError(MP_ERROR_TEXT("pins must be 0-29"));
-    }
-    if (scl_pin == sda_pin) {
-        mp_raise_ValueError(MP_ERROR_TEXT("SCL and SDA pins must be different"));
-    }
-    i2c_pin_sda = (uint8_t)sda_pin;
-    i2c_pin_scl = (uint8_t)scl_pin;
-    
-    i2c_baudrate = baudrate;
-    i2c_use_pullups = (uint8_t)pullups;
-    
-    return mp_const_none;
-}
-static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(i2cslave_setup_obj, 4, 5, i2cslave_setup);
-
-
-
 
 
 
@@ -296,6 +392,9 @@ static const mp_rom_map_elem_t i2cslave_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_initialize), MP_ROM_PTR(&i2cslave_initialize_obj) },
     { MP_ROM_QSTR(MP_QSTR_deinit), MP_ROM_PTR(&i2cslave_deinitialize_obj) },
     { MP_ROM_QSTR(MP_QSTR_set_datain_callback), MP_ROM_PTR(&i2cslave_set_datain_callback_obj) },
+    { MP_ROM_QSTR(MP_QSTR_have_pending_data), MP_ROM_PTR(&i2cslave_have_pending_data_obj) },
+    { MP_ROM_QSTR(MP_QSTR_tx_done), MP_ROM_PTR(&i2cslave_tx_done_obj) },
+    
     { MP_ROM_QSTR(MP_QSTR_set_datatxdone_callback), MP_ROM_PTR(&i2cslave_set_datatx_done_callback_obj) },
     { MP_ROM_QSTR(MP_QSTR_write_bytes), MP_ROM_PTR(&i2cslave_write_bytes_obj)},
     { MP_ROM_QSTR(MP_QSTR_pending_data_into), MP_ROM_PTR(&i2cslave_pending_data_into_obj)},

@@ -19,10 +19,11 @@
 
 #include "./slave_mem_i2c.h"
 
-//define USE_OUTDATA_LOCK
 
-
+#define USE_OUTDATA_LOCK
 #define XFER_BUF_VOLATILITY     volatile
+#define EMPTY_READ_BYTE     0x00
+
 
 XFER_BUF_VOLATILITY xfer_buffer in_context;
 XFER_BUF_VOLATILITY xfer_buffer out_context;
@@ -34,6 +35,8 @@ static data_in_callback callback_datain = NULL;
 static data_out_done_callback callback_dataout_done = NULL;
 
 volatile uint8_t busy_reading_or_writing = 0;
+
+
 
 
 #ifdef USE_OUTDATA_LOCK
@@ -86,7 +89,7 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
         }
         
         if (out_context.mem_index >= out_context.mem_len) {
-            i2c_write_byte_raw(i2c, 0xff);
+            i2c_write_byte_raw(i2c, EMPTY_READ_BYTE);
         } else {
             i2c_write_byte_raw(i2c, out_context.mem[out_context.mem_index]);
         }
