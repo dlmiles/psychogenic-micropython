@@ -499,14 +499,18 @@ endif()
 list(APPEND MICROPY_SOURCE_PORT
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/i2cslave/i2cslave.c
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/i2cslave/lib/slave_mem_i2c.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/i2cslave_alt/i2cslave.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/i2cslave_alt/lib/i2cslave_sock_seqpacket.c
 )
 
 list(APPEND MICROPY_SOURCE_QSTR
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/i2cslave/i2cslave.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/i2cslave_alt/i2cslave.c
 )
 
 target_include_directories(${MICROPY_TARGET} PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/modules/i2cslave/lib
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/i2cslave/lib
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/i2cslave_alt/lib
 )
 
 target_sources(${MICROPY_TARGET} PRIVATE

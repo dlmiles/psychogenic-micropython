@@ -1,0 +1,12 @@
+#
+#
+.gdb*
+
+build-gtest
+build-*
+*.log
+*.gcov
+*.tmp
+
+html-coverage/
+venv/
